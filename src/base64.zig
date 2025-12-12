@@ -14,7 +14,10 @@ pub fn main() !void {
     const text = "This is some random sequence";
     const out = try base64.encode(allocator, text);
     std.debug.print("{s}\n", .{out});
+    const dec = try base64.decode(allocator, out);
+    std.debug.print("{s}\n", .{dec});
     defer allocator.free(out);
+    defer allocator.free(dec);
 }
 
 const Base64 = struct {
@@ -33,7 +36,92 @@ const Base64 = struct {
         return self._table[index];
     }
 
-    fn encode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    pub fn _char_index(self: Base64, char: u8) u8 {
+        if (char == '=')
+            return 64;
+
+        var i: u8 = 0;
+        var output_index: u8 = 0;
+
+        while (i < 64) : (i += 1) {
+            if (self._char_at(i) == char)
+                break;
+            output_index += 1;
+        }
+
+        return output_index;
+    }
+
+    // This is out of the book
+    pub fn encode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+        if (input.len == 0) {
+            return "";
+        }
+
+        const n_out = try _calc_encode_length(input);
+        var out = try allocator.alloc(u8, n_out);
+        var buf = [3]u8{ 0, 0, 0 };
+        var count: u8 = 0;
+        var iout: u64 = 0;
+
+        for (input, 0..) |_, i| {
+            buf[count] = input[i];
+            count += 1;
+            if (count == 3) {
+                out[iout] = self._char_at(buf[0] >> 2);
+                out[iout + 1] = self._char_at(((buf[0] & 0x03) << 4) + (buf[1] >> 4));
+                out[iout + 2] = self._char_at(((buf[1] & 0x0f) << 2) + (buf[2] >> 6));
+                out[iout + 3] = self._char_at(buf[2] & 0x3f);
+                iout += 4;
+                count = 0;
+            }
+        }
+
+        if (count == 1) {
+            out[iout] = self._char_at(buf[0] >> 2);
+            out[iout + 1] = self._char_at((buf[0] & 0x03) << 4);
+            out[iout + 2] = '=';
+            out[iout + 3] = '=';
+        }
+        if (count == 2) {
+            out[iout] = self._char_at(buf[0] >> 2);
+            out[iout + 1] = self._char_at(((buf[0] & 0x03) << 4) + (buf[1] >> 4));
+            out[iout + 2] = self._char_at((buf[1] & 0x0f) << 2);
+            out[iout + 3] = '=';
+        }
+
+        return out;
+    }
+
+    pub fn decode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+        if (input.len == 0) {
+            return "";
+        }
+        const len = try _calc_decode_length(input);
+        var out = try allocator.alloc(u8, len);
+        var buf = [4]u8{ 0, 0, 0, 0 };
+        var count: u8 = 0;
+        var iout: u64 = 0;
+
+        for (0..input.len) |i| {
+            buf[count] = self._char_index(input[i]);
+            count += 1;
+            if (count == 4) {
+                out[iout] = (buf[0] << 2) + (buf[1] >> 4);
+                if (buf[2] != 64)
+                    out[iout + 1] = (buf[1] << 4) + (buf[2] >> 2);
+                if (buf[3] != 64)
+                    out[iout + 2] = (buf[2] << 6) + buf[3];
+                iout += 3;
+                count = 0;
+            }
+        }
+
+        return out;
+    }
+
+    // This is the function I initially did by myself
+    pub fn encode_1(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
         const len = try _calc_encode_length(input);
         var elements: usize = 0;
         var output = try allocator.alloc(u8, len);
